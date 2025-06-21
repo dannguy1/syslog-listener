@@ -189,23 +189,44 @@ The system requires the following Python packages (see `requirements.txt`):
 
 ### Listener Management
 
+#### Syslog Listener Service Management
+
+### Starting the Listener
+
 ```bash
-# Start listener
-bash scripts/run_listener.sh start
-bash scripts/run_listener.sh start -b  # Background mode
-
-# Check status
-bash scripts/run_listener.sh status
-
-# Stop listener
-bash scripts/run_listener.sh stop
-
-# Restart listener
-bash scripts/run_listener.sh restart
-
-# View logs
-bash scripts/run_listener.sh logs
+./scripts/run_listener.sh start -b
 ```
+- Starts the syslog listener in the background.
+
+### Stopping the Listener
+
+```bash
+./scripts/run_listener.sh stop
+```
+- Stops any process bound to the syslog port (default: 514).
+
+### Checking Status
+
+```bash
+./scripts/run_listener.sh status
+```
+- Checks if the syslog listener is running on the configured port.
+
+### Viewing Logs
+
+```bash
+./scripts/run_listener.sh logs 100
+```
+- Shows the last 100 lines of the syslog listener log.
+
+### Environment Configuration
+
+- The script loads environment variables from `.env` (or `example.env` as fallback).
+- Ensure your `.env` file is up to date with all required settings.
+
+### Notes
+- The script uses `sudo` for privileged ports. You may be prompted for your password.
+- The Python management script (`run_listener.py`) is now deprecated and only calls the shell script.
 
 ### Testing
 
@@ -338,90 +359,4 @@ If you get `[Errno 13] Permission denied` when starting the listener:
 #### Missing Dependencies
 If you get `No module named 'psycopg2'` errors:
 - **Recommended**: Use the shell wrapper which installs dependencies automatically: `bash scripts/run_listener.sh start`
-- **Manual fix**: Install dependencies: `pip install -r requirements.txt`
-- **Virtual environment**: Activate your virtual environment first: `source venv/bin/activate`
-
-#### Database Connection Issues
-- Verify PostgreSQL is running: `sudo systemctl status postgresql`
-- Check your `.env` file configuration
-- Run the setup script: `bash scripts/setup_db.sh`
-
-#### Import Errors
-- **Recommended**: Use the shell wrapper which sets up the environment: `bash scripts/run_listener.sh start`
-- **Manual fix**: Make sure you're running from the project root directory
-- **Manual fix**: Verify all dependencies are installed: `pip install -r requirements.txt`
-
-### Debug Mode
-
-Enable debug logging by setting `LOG_LEVEL=DEBUG` in your `.env` file:
-
-```env
-LOG_LEVEL=DEBUG
-```
-
-### Log Files
-
-- **Application Logs**: Check the console output or log files specified in configuration
-- **Database Logs**: Check PostgreSQL logs: `sudo tail -f /var/log/postgresql/postgresql-*.log`
-- **System Logs**: Check system logs: `sudo journalctl -u syslog-listener`
-
-## 🤝 Contributing
-
-We welcome contributions! Please follow these steps:
-
-1. **Fork the repository**
-2. **Create a feature branch**: `git checkout -b feature/amazing-feature`
-3. **Make your changes** and add tests
-4. **Run tests**: `python3 -m pytest`
-5. **Commit your changes**: `git commit -m 'Add amazing feature'`
-6. **Push to the branch**: `git push origin feature/amazing-feature`
-7. **Open a Pull Request**
-
-### Development Setup
-
-```bash
-# Clone your fork
-git clone https://github.com/yourusername/syslog-listener.git
-cd syslog-listener
-
-# Add upstream remote
-git remote add upstream https://github.com/original-owner/syslog-listener.git
-
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-pip install -r requirements-dev.txt  # Development dependencies
-
-# Run tests
-python3 -m pytest
-```
-
-### Code Style
-
-- Follow PEP 8 style guidelines
-- Use type hints where appropriate
-- Add docstrings to functions and classes
-- Write tests for new features
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- External AI Analyzer team for database schema compatibility
-- PostgreSQL community for excellent database support
-- Python community for robust libraries and tools
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/yourusername/syslog-listener/issues)
-- **Documentation**: [Wiki](https://github.com/yourusername/syslog-listener/wiki)
-- **Email**: support@example.com
-
----
-
-**Note**: This project is designed to work with existing External AI Analyzer systems and follows the same database schema and configuration patterns.
+- **Manual fix**: Install dependencies: `
