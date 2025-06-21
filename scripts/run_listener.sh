@@ -87,13 +87,30 @@ start_listener_with_sudo() {
         
         # Start with sudo and proper environment variable handling
         cd "$PROJECT_ROOT/src"
-        sudo bash -c 'env $(cat ../.env | xargs) \
-        PYTHONPATH="$PROJECT_ROOT/src" \
-        "$PROJECT_ROOT/venv/bin/python" main.py >> "$PROJECT_ROOT/syslog_listener.out" 2>&1 & echo $! > "$PROJECT_ROOT/syslog_listener.pid"'
+        
+        # Create a temporary script to run with sudo
+        cat > /tmp/start_syslog.sh << EOF
+#!/bin/bash
+cd "$PROJECT_ROOT/src"
+export PYTHONPATH="$PROJECT_ROOT/src"
+$(cat "$PROJECT_ROOT/.env" | grep -v '^#' | sed 's/^/export /')
+"$PROJECT_ROOT/venv/bin/python" main.py >> "$PROJECT_ROOT/syslog_listener.out" 2>&1 &
+echo \$! > "$PROJECT_ROOT/syslog_listener.pid"
+EOF
+        
+        chmod +x /tmp/start_syslog.sh
+        sudo /tmp/start_syslog.sh
+        rm -f /tmp/start_syslog.sh
+        
         # Fix PID file ownership for the invoking user
-        sudo chown $(id -u):$(id -g) "$PROJECT_ROOT/syslog_listener.pid"
-        log "Syslog listener started in background (PID: $(cat "$PROJECT_ROOT/syslog_listener.pid"))"
-        log "Logs are being written to $PROJECT_ROOT/syslog_listener.out"
+        if [ -f "$PROJECT_ROOT/syslog_listener.pid" ]; then
+            sudo chown $(id -u):$(id -g) "$PROJECT_ROOT/syslog_listener.pid"
+            log "Syslog listener started in background (PID: $(cat "$PROJECT_ROOT/syslog_listener.pid"))"
+            log "Logs are being written to $PROJECT_ROOT/syslog_listener.out"
+        else
+            log "Failed to start syslog listener - no PID file created"
+            return 1
+        fi
     else
         log "Starting syslog listener in foreground on port $port..."
         cd "$PROJECT_ROOT/src"
