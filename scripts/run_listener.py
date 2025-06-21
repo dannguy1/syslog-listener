@@ -28,6 +28,19 @@ def get_python_executable():
 
 def is_running():
     """Check if the listener is running."""
+    try:
+        # Use pgrep to check if the process is running
+        result = subprocess.run(['pgrep', '-f', 'main.py'], capture_output=True, text=True)
+        if result.returncode == 0:
+            pids = result.stdout.strip().split('\n')
+            if pids and pids[0]:
+                # Update PID file with the actual PID
+                PID_FILE.write_text(pids[0])
+                return True
+    except Exception:
+        pass
+    
+    # Fallback to PID file check
     if not PID_FILE.exists():
         return False
     
@@ -84,8 +97,18 @@ def start_listener(background=False):
         
         # Prepare command
         cmd = [get_python_executable(), "main.py"]
+        
+        # Prepare environment
+        env = os.environ.copy()
+        
         if needs_sudo:
-            cmd = ["sudo"] + cmd
+            # When using sudo, we need to preserve environment variables
+            # Use nohup to detach the process properly
+            cmd = "sudo -E nohup " + " ".join(cmd) + " > /dev/null 2>&1 &"
+            print("Using sudo with nohup for background execution...")
+        else:
+            # Use nohup for non-sudo background execution
+            cmd = "nohup " + " ".join(cmd) + " > /dev/null 2>&1 &"
         
         # Start process
         with open(LOG_FILE, 'w') as log_file:
@@ -93,19 +116,36 @@ def start_listener(background=False):
                 cmd,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
-                cwd=src_dir
+                cwd=src_dir,
+                env=env,
+                shell=True
             )
         
         # Wait a moment and check if it started
-        time.sleep(1)
-        if process.poll() is None:
-            # Process is running
-            PID_FILE.write_text(str(process.pid))
-            print(f"Syslog listener started with PID {process.pid}.")
-            return True
-        else:
-            print("Failed to start syslog listener in background.")
-            return False
+        time.sleep(3)
+        
+        # Check if the process is running by looking for it in the process list
+        try:
+            result = subprocess.run(['pgrep', '-f', 'main.py'], capture_output=True, text=True)
+            if result.returncode == 0:
+                pids = result.stdout.strip().split('\n')
+                if pids and pids[0]:
+                    pid = pids[0]
+                    PID_FILE.write_text(pid)
+                    print(f"Syslog listener started with PID {pid}.")
+                    return True
+        except Exception as e:
+            print(f"Error checking process: {e}")
+        
+        print("Failed to start syslog listener in background.")
+        # Check the log file for errors
+        if LOG_FILE.exists():
+            with open(LOG_FILE, 'r') as f:
+                log_content = f.read()
+                if log_content.strip():
+                    print("Error log:")
+                    print(log_content)
+        return False
     else:
         print("Starting syslog listener in foreground (Ctrl+C to stop)...")
         
