@@ -87,12 +87,11 @@ start_listener_with_sudo() {
         
         # Start with sudo and proper environment variable handling
         cd "$PROJECT_ROOT/src"
-        sudo env $(cat ../.env | xargs) \
+        sudo bash -c 'env $(cat ../.env | xargs) \
         PYTHONPATH="$PROJECT_ROOT/src" \
-        "$PROJECT_ROOT/venv/bin/python" main.py > "$PROJECT_ROOT/syslog_listener.out" 2>&1 &
-        
-        # Save PID as regular user
-        echo $! > "$PROJECT_ROOT/syslog_listener.pid"
+        "$PROJECT_ROOT/venv/bin/python" main.py >> "$PROJECT_ROOT/syslog_listener.out" 2>&1 & echo $! > "$PROJECT_ROOT/syslog_listener.pid"'
+        # Fix PID file ownership for the invoking user
+        sudo chown $(id -u):$(id -g) "$PROJECT_ROOT/syslog_listener.pid"
         log "Syslog listener started in background (PID: $(cat "$PROJECT_ROOT/syslog_listener.pid"))"
         log "Logs are being written to $PROJECT_ROOT/syslog_listener.out"
     else
