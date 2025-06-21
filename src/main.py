@@ -2,13 +2,15 @@
 
 import sys
 import logging
+import os
 from config import Config
 from syslog_server import SyslogServer
 from db.models import create_tables_if_not_exist
 
 def main():
     # Set up logging
-    logging.basicConfig(level=logging.INFO)
+    log_level = os.getenv('LOG_LEVEL', 'ERROR').upper()
+    logging.basicConfig(level=getattr(logging, log_level, logging.ERROR))
     logger = logging.getLogger(__name__)
 
     # Load configuration
