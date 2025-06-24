@@ -55,17 +55,34 @@ if ! systemctl list-unit-files | grep -q postgresql; then
     exit 1
 fi
 
-# Check if PostgreSQL is running
-if ! sudo systemctl is-active --quiet postgresql; then
-    echo "Starting PostgreSQL service..."
-    sudo systemctl start postgresql
-    if [ $? -ne 0 ]; then
-        echo "Error: Failed to start PostgreSQL service."
+# Check which PostgreSQL clusters are available and running
+echo "Checking PostgreSQL clusters..."
+if command -v pg_lsclusters >/dev/null 2>&1; then
+    CLUSTERS=$(sudo pg_lsclusters | grep online | awk '{print $1 " " $2}')
+    if [ -z "$CLUSTERS" ]; then
+        echo "Error: No PostgreSQL clusters are running."
+        echo "Available clusters:"
+        sudo pg_lsclusters
+        echo ""
+        echo "To start a cluster, run:"
+        echo "  sudo pg_ctlcluster <version> <cluster> start"
         exit 1
+    else
+        echo "✓ Found running PostgreSQL clusters:"
+        echo "$CLUSTERS"
     fi
+else
+    # Fallback: try to start PostgreSQL service
+    if ! sudo systemctl is-active --quiet postgresql; then
+        echo "Starting PostgreSQL service..."
+        sudo systemctl start postgresql
+        if [ $? -ne 0 ]; then
+            echo "Error: Failed to start PostgreSQL service."
+            exit 1
+        fi
+    fi
+    echo "✓ PostgreSQL is running"
 fi
-
-echo "✓ PostgreSQL is running"
 
 # Create user if not exists
 echo ""
@@ -128,12 +145,24 @@ else
     exit 1
 fi
 
+# Function to check if table exists (more reliable method)
+check_table_exists() {
+    local table_name=$1
+    local result
+    result=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -c "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '$table_name');" 2>/dev/null | tr -d ' ')
+    if [ "$result" = "t" ]; then
+        return 0  # Table exists
+    else
+        return 1  # Table does not exist
+    fi
+}
+
 # Check if required tables exist
 echo ""
 echo "Checking existing database schema..."
 
 # Check if devices table exists
-if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "\dt devices;" > /dev/null 2>&1; then
+if check_table_exists "devices"; then
     echo "✓ Devices table exists"
     DEVICES_EXISTS=true
 else
@@ -142,7 +171,7 @@ else
 fi
 
 # Check if log_entries table exists
-if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "\dt log_entries;" > /dev/null 2>&1; then
+if check_table_exists "log_entries"; then
     echo "✓ Log entries table exists"
     LOG_ENTRIES_EXISTS=true
 else
@@ -168,8 +197,11 @@ CREATE TABLE devices (
 EOF
     if [ $? -eq 0 ]; then
         echo "✓ Devices table created successfully"
+        DEVICES_EXISTS=true
     else
         echo "✗ Failed to create devices table"
+        echo "Error details:"
+        PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "CREATE TABLE devices (id SERIAL PRIMARY KEY, name VARCHAR(128) NOT NULL, ip_address VARCHAR(45) NOT NULL UNIQUE, description TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);" 2>&1
         exit 1
     fi
 fi
@@ -196,15 +228,37 @@ CREATE TABLE log_entries (
 EOF
     if [ $? -eq 0 ]; then
         echo "✓ Log entries table created successfully"
+        LOG_ENTRIES_EXISTS=true
     else
         echo "✗ Failed to create log_entries table"
+        echo "Error details:"
+        PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "CREATE TABLE log_entries (id SERIAL PRIMARY KEY, device_id INTEGER NOT NULL, device_ip VARCHAR(45) NOT NULL, timestamp TIMESTAMP NOT NULL, log_level VARCHAR(50), process_name VARCHAR(128), message TEXT NOT NULL, raw_message TEXT, structured_data JSON, pushed_to_ai BOOLEAN DEFAULT FALSE, pushed_at TIMESTAMP, push_attempts INTEGER DEFAULT 0, last_push_error TEXT, FOREIGN KEY (device_id) REFERENCES devices(id));" 2>&1
         exit 1
     fi
 fi
 
+# Grant comprehensive privileges on tables
+echo "Granting comprehensive privileges on tables..."
+PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $DB_USER;" 2>/dev/null
+PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO $DB_USER;" 2>/dev/null
+PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO $DB_USER;" 2>/dev/null
+PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO $DB_USER;" 2>/dev/null
+
 # Create indexes if they don't exist
 echo ""
 echo "Setting up database indexes..."
+
+# Function to check if index exists
+check_index_exists() {
+    local index_name=$1
+    local result
+    result=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -c "SELECT EXISTS (SELECT FROM pg_indexes WHERE indexname = '$index_name');" 2>/dev/null | tr -d ' ')
+    if [ "$result" = "t" ]; then
+        return 0  # Index exists
+    else
+        return 1  # Index does not exist
+    fi
+}
 
 # Check and create indexes for log_entries table
 INDEXES=(
@@ -217,7 +271,7 @@ INDEXES=(
 )
 
 for index in "${INDEXES[@]}"; do
-    if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "\di $index;" > /dev/null 2>&1; then
+    if check_index_exists "$index"; then
         echo "✓ Index $index exists"
     else
         echo "Creating index $index..."
@@ -261,20 +315,39 @@ else
     exit 1
 fi
 
-# Test table access
-if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "SELECT COUNT(*) FROM devices;" > /dev/null 2>&1; then
-    echo "✓ Devices table access verified"
+# Verify tables actually exist and are accessible
+echo "Verifying table existence and access..."
+
+if check_table_exists "devices"; then
+    echo "✓ Devices table exists"
+    if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "SELECT COUNT(*) FROM devices;" > /dev/null 2>&1; then
+        echo "✓ Devices table access verified"
+    else
+        echo "✗ Devices table access failed"
+        exit 1
+    fi
 else
-    echo "✗ Devices table access failed"
+    echo "✗ Devices table does not exist"
     exit 1
 fi
 
-if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "SELECT COUNT(*) FROM log_entries;" > /dev/null 2>&1; then
-    echo "✓ Log entries table access verified"
+if check_table_exists "log_entries"; then
+    echo "✓ Log entries table exists"
+    if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "SELECT COUNT(*) FROM log_entries;" > /dev/null 2>&1; then
+        echo "✓ Log entries table access verified"
+    else
+        echo "✗ Log entries table access failed"
+        exit 1
+    fi
 else
-    echo "✗ Log entries table access failed"
+    echo "✗ Log entries table does not exist"
     exit 1
 fi
+
+# Display final table list
+echo ""
+echo "Final database schema:"
+PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "\dt+"
 
 echo ""
 echo "=========================================="

@@ -1,151 +1,142 @@
 import re
 from datetime import datetime
+from dateutil import parser as dateutil_parser
+
+# RFC 3164: <PRI>MMM dd HH:MM:SS HOST PROC[PID]: MSG
+RFC3164_REGEX = re.compile(
+    r'^<(?P<pri>\d{1,3})>'
+    r'(?P<timestamp>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+'
+    r'(?P<hostname>[\w\.-]+)\s+'
+    r'(?:(?P<process>[\w\/\.-]+)(?:\[(?P<pid>\d+)\])?:\s+)?'
+    r'(?P<message>.*)$'
+)
+
+# RFC 5424: <PRI>1 YYYY-MM-DDTHH:MM:SS(.sss)?(Z|±hh:mm)? HOST APP PROCID MSGID [SD] MSG
+RFC5424_REGEX = re.compile(
+    r'^<(?P<pri>\d{1,3})>1\s+'
+    r'(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[-+]\d{2}:?\d{2})?)\s+'
+    r'(?P<hostname>[\w\.-]+)\s+'
+    r'(?P<appname>[\w\.-]+)\s+'
+    r'(?P<procid>[\w\.-]+)\s+'
+    r'(?P<msgid>[\w\.-]+)\s+'
+    r'(?P<structured_data>(\[[^\]]*\])*)\s*'
+    r'(?P<message>.*)$'
+)
+
+# No priority, fallback for common syslog lines
+NO_PRI_REGEX = re.compile(
+    r'^(?P<timestamp>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+'
+    r'(?P<hostname>[\w\.-]+)\s+'
+    r'(?:(?P<process>[\w\/\.-]+)(?:\[(?P<pid>\d+)\])?:\s+)?'
+    r'(?P<message>.*)$'
+)
+
+# Fallback: just try to get a message
+FALLBACK_REGEX = re.compile(r'^(?P<message>.*)$')
+
+SEVERITY_MAP = {
+    0: 'emergency', 1: 'alert', 2: 'critical', 3: 'error',
+    4: 'warning', 5: 'notice', 6: 'info', 7: 'debug'
+}
 
 def parse_syslog_message(message):
     """
-    Parse a syslog message and extract all relevant fields for the database.
-    Compatible with existing system schema.
-    
-    Args:
-        message (str): Raw syslog message
-        
-    Returns:
-        dict: Parsed message with all required fields
+    Robust syslog parser supporting RFC 3164, RFC 5424, and common variants.
+    Returns a dict with all fields, always preserves raw_message.
     """
+    raw_message = message
+    result = {
+        'timestamp': None,
+        'hostname': None,
+        'program': None,
+        'severity': 'info',
+        'raw_message': raw_message,
+        'message': None,
+        'structured_data': {},
+    }
+    # Try RFC 5424 first
+    match = RFC5424_REGEX.match(message)
+    if match:
+        pri = int(match.group('pri'))
+        result['severity'] = SEVERITY_MAP.get(pri & 0x07, 'info')
+        result['timestamp'] = parse_flexible_timestamp(match.group('timestamp'))
+        result['hostname'] = match.group('hostname')
+        result['program'] = match.group('appname')
+        result['message'] = match.group('message')
+        # Structured data
+        sd = match.group('structured_data')
+        if sd and sd.strip():
+            result['structured_data'] = {'sd': sd.strip()}
+        # Add extra fields
+        result['structured_data'].update({
+            'priority': pri,
+            'facility': (pri >> 3) & 0x1F,
+            'severity_code': pri & 0x07,
+            'procid': match.group('procid'),
+            'msgid': match.group('msgid'),
+        })
+        return result
+    # Try RFC 3164
+    match = RFC3164_REGEX.match(message)
+    if match:
+        pri = int(match.group('pri'))
+        result['severity'] = SEVERITY_MAP.get(pri & 0x07, 'info')
+        result['timestamp'] = parse_flexible_timestamp(match.group('timestamp'))
+        result['hostname'] = match.group('hostname')
+        result['program'] = match.group('process')
+        result['message'] = match.group('message')
+        pid = match.group('pid')
+        if pid:
+            result['structured_data']['pid'] = int(pid)
+        result['structured_data'].update({
+            'priority': pri,
+            'facility': (pri >> 3) & 0x1F,
+            'severity_code': pri & 0x07,
+        })
+        return result
+    # Try no-priority regex
+    match = NO_PRI_REGEX.match(message)
+    if match:
+        result['timestamp'] = parse_flexible_timestamp(match.group('timestamp'))
+        result['hostname'] = match.group('hostname')
+        result['program'] = match.group('process')
+        result['message'] = match.group('message')
+        pid = match.group('pid')
+        if pid:
+            result['structured_data']['pid'] = int(pid)
+        return result
+    # Fallback: just store the message
+    match = FALLBACK_REGEX.match(message)
+    if match:
+        result['message'] = match.group('message')
+    # Always set timestamp if missing
+    if not result['timestamp']:
+        result['timestamp'] = datetime.utcnow()
+    return result
+
+def parse_flexible_timestamp(ts):
+    """
+    Try to parse a syslog timestamp using dateutil for flexibility.
+    Handles RFC 3164, RFC 5424, and common variants.
+    """
+    if not ts:
+        return datetime.utcnow()
     try:
-        # Store the original message
-        raw_message = message
-        
-        # Standard syslog format: <PRI>TIMESTAMP HOSTNAME PROGRAM[PID]: MESSAGE
-        # PRI = facility * 8 + severity
-        
-        # Extract priority if present (format: <PRI>)
-        priority_match = re.match(r'<(\d+)>', message)
-        severity = 'info'  # Default severity
-        
-        if priority_match:
-            priority = int(priority_match.group(1))
-            # Extract severity from priority (last 3 bits)
-            severity_code = priority & 0x07
-            severity_map = {
-                0: 'emergency',
-                1: 'alert', 
-                2: 'critical',
-                3: 'error',
-                4: 'warning',
-                5: 'notice',
-                6: 'info',
-                7: 'debug'
-            }
-            severity = severity_map.get(severity_code, 'info')
-            # Remove priority from message for further parsing
-            message = message[priority_match.end():]
-        
-        # Split the remaining message
-        parts = message.strip().split()
-        
-        if len(parts) < 3:
-            # If we can't parse properly, return basic info
-            return {
-                "timestamp": datetime.utcnow(),
-                "hostname": "unknown",
-                "message": message,
-                "severity": severity,
-                "raw_message": raw_message,
-                "program": None,
-                "structured_data": {}
-            }
-        
-        # Try to parse timestamp (first two parts)
-        timestamp_str = f"{parts[0]} {parts[1]}"
-        try:
-            # Try to parse common timestamp formats
-            timestamp = datetime.strptime(timestamp_str, "%b %d %H:%M:%S")
-            # Add current year since syslog doesn't include it
-            timestamp = timestamp.replace(year=datetime.now().year)
-            hostname = parts[2]
-            remaining_parts = parts[3:]
-        except ValueError:
-            # If timestamp parsing fails, try to find hostname in a different way
-            # Look for patterns like "hostname program[pid]:" or "hostname:"
-            timestamp = datetime.utcnow()
-            
-            # Try to find hostname by looking for common patterns
-            if len(parts) >= 2:
-                # Check if second part looks like a hostname (no special chars)
-                potential_hostname = parts[1]
-                if re.match(r'^[a-zA-Z0-9\-_\.]+$', potential_hostname):
-                    hostname = potential_hostname
-                    remaining_parts = parts[2:]
-                else:
-                    # If second part doesn't look like hostname, use first part
-                    hostname = parts[0]
-                    remaining_parts = parts[1:]
-            else:
-                hostname = "unknown"
-                remaining_parts = parts
-        
-        # Extract program name and PID
-        program = None
-        if remaining_parts:
-            # Look for pattern like "program[pid]:" or "program:"
-            process_match = re.match(r'^([^:[\]]+)(?:\[(\d+)\])?:?(.*)$', remaining_parts[0])
-            if process_match:
-                program = process_match.group(1)
-                pid = process_match.group(2)
-                message_content = process_match.group(3).strip()
-                if message_content:
-                    # If there's content after the process, it's part of the message
-                    remaining_parts = [message_content] + remaining_parts[1:]
-                else:
-                    # Otherwise, the rest of the parts are the message
-                    remaining_parts = remaining_parts[1:]
-            else:
-                # If no process pattern, the first part might be the program name
-                program = remaining_parts[0]
-                remaining_parts = remaining_parts[1:]
-        
-        # Join remaining parts as the message
-        log_content = " ".join(remaining_parts) if remaining_parts else message
-        
-        # Extract structured data if present (RFC 5424 format)
-        structured_data = {}
-        if '[SD-ID' in log_content:
-            # Extract structured data
-            sd_match = re.search(r'\[([^\]]+)\]', log_content)
-            if sd_match:
-                structured_data = {"sd_id": sd_match.group(1)}
-        
-        return {
-            "timestamp": timestamp,
-            "hostname": hostname,
-            "message": log_content,
-            "severity": severity,
-            "raw_message": raw_message,
-            "program": program,
-            "structured_data": structured_data
-        }
-        
-    except Exception as e:
-        # Fallback parsing if anything goes wrong
-        return {
-            "timestamp": datetime.utcnow(),
-            "hostname": "unknown",
-            "message": message,
-            "severity": "info",
-            "raw_message": message,
-            "program": None,
-            "structured_data": {}
-        }
+        # Try dateutil for full flexibility
+        dt = dateutil_parser.parse(ts, fuzzy=True, default=datetime.now())
+        # If year is missing (RFC 3164), set to current year
+        if dt.year == 1900:
+            dt = dt.replace(year=datetime.now().year)
+        return dt
+    except Exception:
+        return datetime.utcnow()
 
 def validate_syslog_message(message):
-    # Basic validation to check if the message is not empty
     if not message:
         return False
     return True
 
 def format_for_storage(parsed_message):
-    # Format the parsed message into a dictionary suitable for database storage
     return {
         "timestamp": parsed_message["timestamp"],
         "hostname": parsed_message["hostname"],
