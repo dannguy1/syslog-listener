@@ -31,6 +31,15 @@ NO_PRI_REGEX = re.compile(
     r'(?P<message>.*)$'
 )
 
+# Enhanced regex for problematic formats (like the ones we saw in logs)
+ENHANCED_REGEX = re.compile(
+    r'^(?:<(?P<pri>\d{1,3})>)?'
+    r'(?:(?P<timestamp>\d{1,2}:\s+\d{2}:\d{2})\s+)?'
+    r'(?P<hostname>[\w\.-]+)\s+'
+    r'(?:(?P<process>[\w\/\.-]+)(?:\[(?P<pid>\d+)\])?:\s+)?'
+    r'(?P<message>.*)$'
+)
+
 # Fallback: just try to get a message
 FALLBACK_REGEX = re.compile(r'^(?P<message>.*)$')
 
@@ -54,6 +63,7 @@ def parse_syslog_message(message):
         'message': None,
         'structured_data': {},
     }
+    
     # Try RFC 5424 first
     match = RFC5424_REGEX.match(message)
     if match:
@@ -76,6 +86,7 @@ def parse_syslog_message(message):
             'msgid': match.group('msgid'),
         })
         return result
+    
     # Try RFC 3164
     match = RFC3164_REGEX.match(message)
     if match:
@@ -94,6 +105,37 @@ def parse_syslog_message(message):
             'severity_code': pri & 0x07,
         })
         return result
+    
+    # Try enhanced regex for problematic formats
+    match = ENHANCED_REGEX.match(message)
+    if match:
+        pri = match.group('pri')
+        if pri:
+            pri = int(pri)
+            result['severity'] = SEVERITY_MAP.get(pri & 0x07, 'info')
+            result['structured_data'].update({
+                'priority': pri,
+                'facility': (pri >> 3) & 0x1F,
+                'severity_code': pri & 0x07,
+            })
+        
+        # Handle timestamp - if it's just time, use current date
+        ts = match.group('timestamp')
+        if ts:
+            # If it's just time format (HH: MM:SS), add current date
+            if re.match(r'\d{1,2}:\s+\d{2}:\d{2}', ts):
+                current_date = datetime.now().strftime('%b %d')
+                ts = f"{current_date} {ts.replace(' ', '')}"
+            result['timestamp'] = parse_flexible_timestamp(ts)
+        
+        result['hostname'] = match.group('hostname')
+        result['program'] = match.group('process')
+        result['message'] = match.group('message')
+        pid = match.group('pid')
+        if pid:
+            result['structured_data']['pid'] = int(pid)
+        return result
+    
     # Try no-priority regex
     match = NO_PRI_REGEX.match(message)
     if match:
@@ -105,13 +147,16 @@ def parse_syslog_message(message):
         if pid:
             result['structured_data']['pid'] = int(pid)
         return result
+    
     # Fallback: just store the message
     match = FALLBACK_REGEX.match(message)
     if match:
         result['message'] = match.group('message')
+    
     # Always set timestamp if missing
     if not result['timestamp']:
         result['timestamp'] = datetime.utcnow()
+    
     return result
 
 def parse_flexible_timestamp(ts):
@@ -132,11 +177,14 @@ def parse_flexible_timestamp(ts):
         return datetime.utcnow()
 
 def validate_syslog_message(message):
+    """Validate if a message looks like a syslog message."""
     if not message:
         return False
-    return True
+    # Basic validation - should have some structure
+    return len(message.strip()) > 0
 
 def format_for_storage(parsed_message):
+    """Format parsed message for database storage."""
     return {
         "timestamp": parsed_message["timestamp"],
         "hostname": parsed_message["hostname"],
@@ -146,3 +194,31 @@ def format_for_storage(parsed_message):
         "program": parsed_message.get("program"),
         "structured_data": parsed_message.get("structured_data", {})
     }
+
+def clean_hostname(hostname):
+    """
+    Clean and validate hostname/IP address.
+    Returns None if the hostname is clearly invalid.
+    """
+    if not hostname:
+        return None
+    
+    # Remove any whitespace
+    hostname = hostname.strip()
+    
+    # Check if it's a valid IP address pattern
+    ip_pattern = re.compile(r'^(\d{1,3}\.){3}\d{1,3}$')
+    if ip_pattern.match(hostname):
+        return hostname
+    
+    # Check if it's a valid hostname pattern
+    hostname_pattern = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$')
+    if hostname_pattern.match(hostname):
+        return hostname
+    
+    # If it's just a number (like "23"), it's probably not a valid hostname
+    if hostname.isdigit():
+        return None
+    
+    # For other cases, return as-is but log a warning
+    return hostname

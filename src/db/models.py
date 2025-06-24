@@ -6,12 +6,15 @@ import os
 import sys
 import re
 import json
+import logging
 
 # Add the src directory to the path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from config import SQLALCHEMY_DATABASE_URL
+from utils.parser import clean_hostname
 
 Base = declarative_base()
+logger = logging.getLogger(__name__)
 
 class Device(Base):
     """Device table to store information about devices that send logs."""
@@ -64,27 +67,27 @@ def create_tables_if_not_exist():
         existing_tables = inspector.get_table_names()
         
         if 'log_entries' not in existing_tables or 'devices' not in existing_tables:
-            print("Creating database tables...")
+            logger.info("Creating database tables...")
             Base.metadata.create_all(engine)
-            print("Database tables created successfully.")
+            logger.info("Database tables created successfully.")
         else:
-            print("Database tables already exist. Using existing schema.")
+            logger.debug("Database tables already exist. Using existing schema.")
             
     except Exception as e:
-        print(f"Error creating tables: {e}")
+        logger.error(f"Error creating tables: {e}")
         raise
 
 def create_tables():
     """Create all database tables (for new installations)."""
     engine = create_engine(SQLALCHEMY_DATABASE_URL)
     Base.metadata.create_all(engine)
-    print("Database tables created successfully.")
+    logger.info("Database tables created successfully.")
 
 def drop_tables():
     """Drop all database tables."""
     engine = create_engine(SQLALCHEMY_DATABASE_URL)
     Base.metadata.drop_all(engine)
-    print("Database tables dropped successfully.")
+    logger.info("Database tables dropped successfully.")
 
 def save_log_entry(parsed_message):
     """
@@ -103,25 +106,32 @@ def save_log_entry(parsed_message):
         Session = sessionmaker(bind=engine)
         session = Session()
         
-        # Get or create device record
+        # Get or create device record with improved hostname validation
         hostname = parsed_message.get('hostname', 'unknown')
+        cleaned_hostname = clean_hostname(hostname)
+        
+        # If hostname is invalid, use a fallback
+        if not cleaned_hostname:
+            logger.warning(f"Invalid hostname detected: '{hostname}', using fallback")
+            cleaned_hostname = 'unknown-device'
         
         # Check if device exists
-        device = session.query(Device).filter_by(ip_address=hostname).first()
+        device = session.query(Device).filter_by(ip_address=cleaned_hostname).first()
         if not device:
             # Create new device
             device = Device(
-                name=f"Device-{hostname}",
-                ip_address=hostname,
-                description=f"Auto-created device for {hostname}"
+                name=f"Device-{cleaned_hostname}",
+                ip_address=cleaned_hostname,
+                description=f"Auto-created device for {cleaned_hostname}"
             )
             session.add(device)
             session.flush()  # Flush to get the ID without committing
+            logger.debug(f"Created new device: {device}")
         
-        # Create new log entry
+        # Create new log entry with improved field handling
         log_entry = LogEntry(
             device_id=device.id,
-            device_ip=hostname,
+            device_ip=cleaned_hostname,
             timestamp=parsed_message.get('timestamp', datetime.utcnow()),
             log_level=parsed_message.get('severity', 'info'),
             process_name=parsed_message.get('program'),
@@ -138,10 +148,11 @@ def save_log_entry(parsed_message):
         # Commit everything
         session.commit()
         
-        print(f"Saved log entry: {log_entry}")
+        # Only log at debug level to reduce verbosity
+        logger.debug(f"Saved log entry: {log_entry}")
         
     except Exception as e:
-        print(f"Error saving log entry: {e}")
+        logger.error(f"Error saving log entry: {e}")
         if session:
             session.rollback()
     finally:
