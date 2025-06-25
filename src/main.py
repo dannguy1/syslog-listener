@@ -4,9 +4,9 @@ import sys
 import logging
 import os
 from logging.handlers import RotatingFileHandler
-from config import Config
-from syslog_server import SyslogServer
-from db.models import create_tables_if_not_exist
+from .config import Config
+from .syslog_server import SyslogServer
+from .db.models import create_tables_if_not_exist
 
 def setup_logging():
     """Set up logging with rotation to prevent log file bloat"""
