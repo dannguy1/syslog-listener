@@ -23,7 +23,8 @@ This guide explains how to install the syslog listener as a system service that 
 The installation script will:
 - Install required system packages (Python, PostgreSQL, etc.)
 - Create a dedicated service user with proper permissions
-- Set up Python virtual environment
+- Copy application code to `/opt/syslog-listener` (separate from development directory)
+- Set up Python virtual environment in the installation directory
 - Install Python dependencies
 - Check if database exists and skip setup if already present
 - Configure PostgreSQL for remote access (if database setup needed)
@@ -39,7 +40,8 @@ The installation script will:
 - **User**: `syslog` (dedicated service user with `/usr/sbin/nologin` shell)
 - **Auto-start**: Enabled (starts on boot)
 - **Port**: 514 (standard syslog port)
-- **Wrapper Script**: `start_syslog_listener.sh` (ensures proper virtual environment activation)
+- **Installation Directory**: `/opt/syslog-listener` (separate from development directory)
+- **Wrapper Script**: `/opt/syslog-listener/start_syslog_listener.sh` (ensures proper virtual environment activation)
 
 ### Database
 - **Database**: `netmonitor_db`
@@ -52,8 +54,35 @@ The installation script will:
 The installation creates convenient management scripts in `/usr/local/bin/`:
 - `syslog-listener-start` - Start the service
 - `syslog-listener-stop` - Stop the service
-- `syslog-listener-status` - Show service status
+- `syslog-listener-status` - Show service status and recent logs
 - `syslog-listener-restart` - Restart the service
+- `syslog-listener-update` - Update from development directory
+
+## Installation Architecture
+
+### Directory Structure
+```
+Development Directory: /home/dannguyen/syslog-listener/
+├── src/                    # Source code
+├── requirements.txt        # Python dependencies
+├── install.sh             # Installation script
+├── uninstall.sh           # Uninstallation script
+└── ...                    # Other development files
+
+Installation Directory: /opt/syslog-listener/
+├── src/                   # Copied source code
+├── venv/                  # Python virtual environment
+├── requirements.txt       # Copied requirements
+├── .env                   # Service configuration
+├── start_syslog_listener.sh  # Wrapper script
+└── logs/                  # Application logs
+```
+
+### Key Benefits
+- **Clean Separation**: Development directory remains untouched
+- **Proper Permissions**: Service runs with dedicated user and proper file ownership
+- **Easy Updates**: Use `syslog-listener-update` to deploy changes from development
+- **Complete Cleanup**: Uninstall removes all service components while preserving development directory
 
 ## Configuration
 
@@ -94,6 +123,9 @@ syslog-listener-status
 
 # Restart the service
 syslog-listener-restart
+
+# Update from development directory
+syslog-listener-update
 ```
 
 **Using systemctl:**
@@ -114,6 +146,19 @@ sudo journalctl -u syslog-listener -f
 sudo systemctl enable syslog-listener
 sudo systemctl disable syslog-listener
 ```
+
+### Development Workflow
+
+1. **Make changes in development directory** (`/home/dannguyen/syslog-listener/`)
+2. **Test changes locally** (optional)
+3. **Deploy to service** using the update script:
+   ```bash
+   sudo syslog-listener-update
+   ```
+4. **Verify service is running**:
+   ```bash
+   syslog-listener-status
+   ```
 
 ### Sending Syslog Messages
 
@@ -193,11 +238,14 @@ LIMIT 10;
    **Issue**: `Failed at step EXEC spawning /path/to/python: No such file or directory`
    **Solution**: The wrapper script ensures proper virtual environment activation. Check if the wrapper script exists and is executable.
 
+   **Issue**: `ModuleNotFoundError: No module named 'dateutil'`
+   **Solution**: Ensure `python-dateutil` is in requirements.txt and run `sudo syslog-listener-update` to install missing dependencies.
+
    **Issue**: `ModuleNotFoundError: No module named 'config'`
    **Solution**: Ensure the `src/__init__.py` file exists and the imports in `main.py` use relative imports (e.g., `from .config import Config`).
 
    **Issue**: `Permission denied` errors
-   **Solution**: The service user needs access to the application directory. The installer sets proper permissions.
+   **Solution**: The service user needs access to the installation directory. The installer sets proper permissions.
 
    **Issue**: Port 514 already in use
    **Solution**: Check what's using the port: `sudo netstat -tulpn | grep :514`
@@ -231,7 +279,7 @@ sudo iptables -L | grep 5432
 If the service can't find Python packages:
 ```bash
 # Check if virtual environment is properly set up
-sudo -u syslog /home/dannguyen/syslog-listener/start_syslog_listener.sh
+sudo -u syslog /opt/syslog-listener/start_syslog_listener.sh
 ```
 
 ## Uninstallation
@@ -245,9 +293,23 @@ The uninstall script will:
 - Stop and disable the service
 - Remove systemd service file
 - Remove management scripts
-- Remove wrapper script
+- Remove installation directory (`/opt/syslog-listener`)
 - Remove log directory
 - Optionally remove service user and database (with confirmation)
+- **Preserve development directory** for future use
+
+### What Gets Removed
+- ✅ Systemd service file
+- ✅ Management scripts (`/usr/local/bin/syslog-listener-*`)
+- ✅ Installation directory (`/opt/syslog-listener`)
+- ✅ Log directory (`/var/log/syslog-listener`)
+- ✅ Service user (`syslog`) - optional
+- ✅ Database and user - optional
+
+### What Gets Preserved
+- ✅ Development directory (`/home/dannguyen/syslog-listener`)
+- ✅ Source code and configuration files
+- ✅ Git repository and history
 
 ### Manual Uninstallation Steps
 
@@ -270,9 +332,9 @@ If the uninstall script is not available, you can manually remove the service:
    sudo rm /usr/local/bin/syslog-listener-*
    ```
 
-4. **Remove wrapper script:**
+4. **Remove installation directory:**
    ```bash
-   sudo rm /path/to/syslog-listener/start_syslog_listener.sh
+   sudo rm -rf /opt/syslog-listener
    ```
 
 5. **Remove log directory:**
@@ -298,9 +360,16 @@ If the uninstall script is not available, you can manually remove the service:
 3. **Database**: Configured for remote access - consider firewall rules
 4. **Logs**: Service logs are stored in system journal and application logs
 5. **Configuration**: Sensitive data in `.env` file - ensure proper file permissions
-6. **Directory Permissions**: The installer sets proper permissions for the service user to access the application directory
+6. **Directory Permissions**: The installer sets proper permissions for the service user to access the installation directory
+7. **Clean Separation**: Service runs from dedicated installation directory, not development directory
 
 ## Important Notes
+
+### Installation Pattern
+- **Development Directory**: `/home/dannguyen/syslog-listener` (preserved)
+- **Installation Directory**: `/opt/syslog-listener` (created during install, removed during uninstall)
+- **Code Copying**: Application code is copied to installation directory during install
+- **Virtual Environment**: Created in installation directory, not development directory
 
 ### Database Installation Behavior
 - The installer checks if the database `netmonitor_db` already exists
@@ -323,6 +392,11 @@ If the uninstall script is not available, you can manually remove the service:
 - This requires running the application as a module with `python -m src.main`
 - The wrapper script handles this automatically
 
+### Update Process
+- The `syslog-listener-update` script copies changes from development to installation directory
+- It also updates Python dependencies if requirements.txt has changed
+- The service is automatically restarted after updates
+
 ## Support
 
 For issues or questions:
@@ -330,4 +404,5 @@ For issues or questions:
 2. Review service logs: `sudo journalctl -u syslog-listener`
 3. Check application logs: `/var/log/syslog-listener/syslog_listener.log`
 4. Verify database connectivity and configuration
-5. Test the wrapper script manually: `sudo -u syslog /path/to/syslog-listener/start_syslog_listener.sh`
+5. Test the wrapper script manually: `sudo -u syslog /opt/syslog-listener/start_syslog_listener.sh`
+6. Check installation directory permissions: `ls -la /opt/syslog-listener/`

@@ -4,7 +4,8 @@ set -e
 # Configuration
 SERVICE_NAME="syslog-listener"
 SERVICE_USER="syslog"
-APP_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEV_DIR="$(cd "$(dirname "$0")" && pwd)"  # Development directory
+INSTALL_DIR="/opt/syslog-listener"         # Installation directory
 
 # Colors for output
 RED='\033[0;31m'
@@ -35,14 +36,14 @@ echo ""
 
 # 1. Stop and disable service
 echo -e "${YELLOW}1. Stopping and disabling service...${NC}"
-if systemctl is-active --quiet "$SERVICE_NAME"; then
+if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
     systemctl stop "$SERVICE_NAME"
     echo "Service stopped"
 else
     echo "Service was not running"
 fi
 
-if systemctl is-enabled --quiet "$SERVICE_NAME"; then
+if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
     systemctl disable "$SERVICE_NAME"
     echo "Service disabled"
 else
@@ -61,21 +62,20 @@ fi
 
 # 3. Remove management scripts
 echo -e "${YELLOW}3. Removing management scripts...${NC}"
-for cmd in start stop status restart; do
+for cmd in start stop status restart update; do
     if [ -f "/usr/local/bin/syslog-listener-$cmd" ]; then
         rm -f "/usr/local/bin/syslog-listener-$cmd"
         echo "Removed: /usr/local/bin/syslog-listener-$cmd"
     fi
 done
 
-# 4. Remove wrapper script
-echo -e "${YELLOW}4. Removing wrapper script...${NC}"
-WRAPPER_SCRIPT="$APP_DIR/start_syslog_listener.sh"
-if [ -f "$WRAPPER_SCRIPT" ]; then
-    rm -f "$WRAPPER_SCRIPT"
-    echo "Wrapper script removed: $WRAPPER_SCRIPT"
+# 4. Remove installation directory
+echo -e "${YELLOW}4. Removing installation directory...${NC}"
+if [ -d "$INSTALL_DIR" ]; then
+    rm -rf "$INSTALL_DIR"
+    echo "Installation directory removed: $INSTALL_DIR"
 else
-    echo "Wrapper script not found"
+    echo "Installation directory not found: $INSTALL_DIR"
 fi
 
 # 5. Remove log directory
@@ -107,7 +107,7 @@ echo -e "${YELLOW}7. Checking database...${NC}"
 DB_NAME="netmonitor_db"
 DB_USER="netmonitor_user"
 
-if sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw "$DB_NAME"; then
+if sudo -u postgres psql -lqt 2>/dev/null | cut -d \| -f 1 | grep -qw "$DB_NAME"; then
     read -p "Remove database '$DB_NAME' and user '$DB_USER'? (y/N): " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
@@ -121,29 +121,10 @@ else
     echo "Database not found: $DB_NAME"
 fi
 
-# 8. Optional: Remove application directory
-echo -e "${YELLOW}8. Checking application directory...${NC}"
-if [ -d "$APP_DIR" ]; then
-    read -p "Remove application directory '$APP_DIR'? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        rm -rf "$APP_DIR"
-        echo "Application directory removed: $APP_DIR"
-    else
-        echo "Application directory kept: $APP_DIR"
-    fi
-else
-    echo "Application directory not found: $APP_DIR"
-fi
-
 echo ""
 echo -e "${GREEN}=== Uninstallation Complete ===${NC}"
 echo ""
 echo "The syslog-listener service has been removed from the system."
 echo ""
-echo "If you kept the application directory, you can reinstall by running:"
-echo "  sudo $APP_DIR/install.sh"
-echo ""
-echo "If you removed the application directory, you can reinstall by:"
-echo "  1. Cloning/downloading the project again"
-echo "  2. Running: sudo ./install.sh" 
+echo "Development directory remains: $DEV_DIR"
+echo "To reinstall, run: sudo $DEV_DIR/install.sh" 

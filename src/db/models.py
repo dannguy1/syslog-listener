@@ -3,15 +3,12 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 import os
-import sys
 import re
 import json
 import logging
 
-# Add the src directory to the path for imports
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from config import SQLALCHEMY_DATABASE_URL
-from utils.parser import clean_hostname
+from ..config import SQLALCHEMY_DATABASE_URL
+from ..utils.parser import clean_hostname
 
 Base = declarative_base()
 logger = logging.getLogger(__name__)

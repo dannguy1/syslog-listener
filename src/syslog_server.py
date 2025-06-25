@@ -1,8 +1,8 @@
 import socket
 import threading
 import logging
-from utils.parser import parse_syslog_message
-from db.models import save_log_entry
+from .utils.parser import parse_syslog_message
+from .db.models import save_log_entry
 
 class SyslogServer:
     def __init__(self, host='0.0.0.0', port=514):

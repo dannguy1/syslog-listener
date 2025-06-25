@@ -5,3 +5,4 @@ pytest==6.2.4
 pytest-cov==2.12.1
 python-dotenv
 SQLAlchemy
+python-dateutil

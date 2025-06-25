@@ -26,50 +26,45 @@ echo "4. Committing changes with comprehensive message..."
 
 # Create comprehensive commit message
 cat > /tmp/commit_message.txt << 'EOF'
-feat: Implement robust syslog parser with field validation and cleanup
+feat: Fix import issues and improve install/uninstall scripts
 
-## Parser Improvements
-- Enhanced regex patterns for RFC 3164/5424 and problematic formats
-- Added hostname validation to filter invalid IPs (e.g., "23" -> "unknown-device")
-- Improved process name extraction and message content cleaning
-- Better timestamp parsing with fallback mechanisms
-- Enhanced error handling for malformed messages
+## Import Fixes
+- Fixed ModuleNotFoundError by converting absolute imports to relative imports
+- Updated src/syslog_server.py: from .utils.parser import parse_syslog_message
+- Updated src/db/models.py: from ..config import SQLALCHEMY_DATABASE_URL
+- Updated src/main.py: from .config import Config, from .syslog_server import SyslogServer
+- Added missing __init__.py files in src/utils/ and src/db/ directories
+- Fixed wrapper script path quoting for better compatibility
 
-## Database Integration
-- Updated save_log_entry() to use improved hostname validation
-- Better error handling for invalid hostnames
-- Automatic fallback to "unknown-device" for invalid entries
+## Install Script Improvements
+- Fixed database setup script reference from setup_remote_db.sh to setup_db.sh
+- Added /var/log/syslog-listener to ReadWritePaths in systemd service
+- Improved wrapper script creation with proper dynamic paths
+- Enhanced error handling and security settings
 
-## Logging System
-- Implemented proper log rotation (5MB files, 3 backups)
-- Removed verbose print statements to prevent system burden
-- Added structured logging with appropriate levels
-- Console output limited to warnings/errors only
+## Uninstall Script Improvements
+- Added error suppression (2>/dev/null) to prevent errors on non-existent services
+- Enhanced user removal logic to handle cases where user home directory is app directory
+- Added error suppression for database checks
+- Improved reinstallation instructions based on what was removed
 
-## Code Cleanup
-- Removed 16 temporary/redundant testing scripts
-- Kept only 7 essential production scripts
-- Cleaned up directory structure for GitHub
-- Updated .gitignore for proper file exclusion
+## Systemd Service Enhancements
+- Added proper log directory permissions
+- Enhanced security settings with ReadWritePaths
+- Improved service dependencies and restart behavior
 
-## Scripts Retained
-- setup_db.sh: Database setup and schema creation
-- check_db_status.sh: Database diagnostics and health checks
-- check_logs.py: Log monitoring and statistics
-- manage_logs.sh: Log management and cleanup
-- cleanup_test_logs.sh: Test data cleanup
-- restart_listener.sh: Service restart management
-- test_compatibility.py: Database compatibility testing
+## Git Configuration
+- Fixed git ownership issues by adding safe.directory configuration
+- Resolved permission problems preventing file updates
 
 ## Technical Details
-- Enhanced ENHANCED_REGEX for problematic message formats
-- Added clean_hostname() function for IP/hostname validation
-- Improved field extraction for device_ip, process_name, and message
-- Better handling of malformed syslog messages
-- Maintains full RFC 3164/5424 compatibility
+- All imports now use relative syntax (., ..) for proper module resolution
+- Wrapper script uses quoted paths for better shell compatibility
+- Systemd service includes proper log directory access
+- Uninstall script handles edge cases gracefully
 
-This commit resolves field capture issues and provides a production-ready
-syslog listener with robust parsing and proper logging management.
+This commit resolves the ModuleNotFoundError issues and provides
+robust installation/uninstallation scripts for production deployment.
 EOF
 
 # Commit with the message
@@ -80,13 +75,13 @@ rm /tmp/commit_message.txt
 
 echo ""
 echo "5. Pushing to GitHub..."
-git push origin main
+git push origin dev
 
 echo ""
 echo "✅ Successfully committed and pushed to GitHub!"
 echo ""
 echo "Commit includes:"
-echo "  - Parser improvements with field validation"
-echo "  - Enhanced logging system with rotation"
-echo "  - Code cleanup and script organization"
-echo "  - Database integration improvements"
+echo "  - Import fixes for ModuleNotFoundError"
+echo "  - Improved install/uninstall scripts"
+echo "  - Enhanced systemd service configuration"
+echo "  - Git ownership and permission fixes"
